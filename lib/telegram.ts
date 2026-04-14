@@ -31,16 +31,7 @@ export interface TelegramUpdate {
   }
 }
 
-export interface SendMessageOptions {
-  chatId: number | string
-  text: string
-  parseMode?: "Markdown" | "MarkdownV2" | "HTML"
-  disableWebPagePreview?: boolean
-}
-
-export async function sendMessage(options: SendMessageOptions): Promise<boolean> {
-  const { chatId, text, parseMode = "Markdown", disableWebPagePreview = true } = options
-
+export async function sendMessage(chatId: number | string, text: string, parseMode: "Markdown" | "MarkdownV2" | "HTML" = "Markdown"): Promise<boolean> {
   try {
     const response = await fetch(getApiUrl("sendMessage"), {
       method: "POST",
@@ -51,7 +42,7 @@ export async function sendMessage(options: SendMessageOptions): Promise<boolean>
         chat_id: chatId,
         text,
         parse_mode: parseMode,
-        disable_web_page_preview: disableWebPagePreview,
+        disable_web_page_preview: true,
       }),
     })
 
@@ -133,6 +124,9 @@ export async function getMe(): Promise<{
     return { ok: false }
   }
 }
+
+// Alias for getMe
+export const getBotInfo = getMe
 
 // Escape special characters for MarkdownV2
 export function escapeMarkdownV2(text: string): string {

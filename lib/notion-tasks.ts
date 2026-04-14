@@ -204,6 +204,66 @@ export async function searchTasks(query: string): Promise<Task[]> {
   return extractTasks(response)
 }
 
+export async function getOverdueTasks(): Promise<Task[]> {
+  const today = new Date().toISOString().split("T")[0]
+
+  const response = await notion.databases.query({
+    database_id: DATABASE_ID,
+    filter: {
+      and: [
+        {
+          property: "Due date",
+          date: {
+            before: today,
+          },
+        },
+        {
+          property: "Status",
+          status: {
+            does_not_equal: "Done",
+          },
+        },
+      ],
+    },
+    sorts: [{ property: "Due date", direction: "ascending" }],
+  })
+
+  return extractTasks(response)
+}
+
+export async function getTasksByStatus(status: "Not started" | "In progress" | "Done"): Promise<Task[]> {
+  const response = await notion.databases.query({
+    database_id: DATABASE_ID,
+    filter: {
+      property: "Status",
+      status: {
+        equals: status,
+      },
+    },
+    sorts: [{ property: "Due date", direction: "ascending" }],
+  })
+
+  return extractTasks(response)
+}
+
+export async function getAllTasks(): Promise<Task[]> {
+  const response = await notion.databases.query({
+    database_id: DATABASE_ID,
+    filter: {
+      property: "Status",
+      status: {
+        does_not_equal: "Done",
+      },
+    },
+    sorts: [
+      { property: "Due date", direction: "ascending" },
+      { property: "Status", direction: "ascending" },
+    ],
+  })
+
+  return extractTasks(response)
+}
+
 export function formatTasksForTelegram(tasks: Task[], title: string): string {
   if (tasks.length === 0) {
     return `${title}\n\nNo tasks found.`
