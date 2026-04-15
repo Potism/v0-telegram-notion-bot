@@ -10,7 +10,7 @@ const notion = new Client({
 })
 
 // Database and property configuration (override in env if needed)
-const DATABASE_ID = process.env.NOTION_DATABASE_ID || "3428ab25d01e80d59fbac3783a7b2d3e"
+const DATABASE_ID = process.env.NOTION_DATABASE_ID || "3428ab25d01e806eb5f0eaf1a1871aff"
 const TASK_NAME_PROPERTY = process.env.NOTION_TASK_NAME_PROPERTY || "Task"
 const DUE_DATE_PROPERTY = process.env.NOTION_DUE_DATE_PROPERTY || "Due Date"
 const STATUS_PROPERTY = process.env.NOTION_STATUS_PROPERTY || "Status"
@@ -20,6 +20,11 @@ const STATUS_FILTER_TYPE = (process.env.NOTION_STATUS_FILTER_TYPE || "select").t
 const STATUS_DONE = process.env.NOTION_STATUS_DONE || "Done"
 const STATUS_IN_PROGRESS = process.env.NOTION_STATUS_IN_PROGRESS || "In Progress"
 const STATUS_NOT_STARTED = process.env.NOTION_STATUS_NOT_STARTED || "To Do"
+
+interface QueryTasksDatabaseOptions {
+  filter?: Record<string, unknown>
+  sorts?: Array<Record<string, unknown>>
+}
 
 export interface Task {
   id: string
@@ -114,6 +119,33 @@ function buildStatusDoesNotEqualFilter(value: string) {
   }
 }
 
+async function queryTasksDatabase(options: QueryTasksDatabaseOptions): Promise<QueryDatabaseResponse> {
+  const notionApiKey = process.env.NOTION_API_KEY
+  if (!notionApiKey) {
+    throw new Error("NOTION_API_KEY is not set")
+  }
+
+  const response = await fetch(`https://api.notion.com/v1/databases/${DATABASE_ID}/query`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${notionApiKey}`,
+      "Notion-Version": "2022-06-28",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(options),
+  })
+
+  const responseData = await response.json()
+  if (!response.ok) {
+    const code = typeof responseData?.code === "string" ? responseData.code : "unknown_error"
+    const message =
+      typeof responseData?.message === "string" ? responseData.message : "Failed to query Notion database"
+    throw new Error(`${code}: ${message}`)
+  }
+
+  return responseData as QueryDatabaseResponse
+}
+
 function extractTasks(response: QueryDatabaseResponse): Task[] {
   return response.results
     .filter((page: any): page is PageObjectResponse => "properties" in page)
@@ -195,8 +227,7 @@ async function enrichTasksWithComments(tasks: Task[]): Promise<Task[]> {
 export async function getTodayTasks(): Promise<Task[]> {
   const today = new Date().toISOString().split("T")[0]
 
-  const response = await notion.databases.query({
-    database_id: DATABASE_ID,
+  const response = await queryTasksDatabase({
     filter: {
       and: [
         {
@@ -221,8 +252,7 @@ export async function getUpcomingTasks(days: number = 7): Promise<Task[]> {
   const futureDate = new Date(today)
   futureDate.setDate(today.getDate() + days)
 
-  const response = await notion.databases.query({
-    database_id: DATABASE_ID,
+  const response = await queryTasksDatabase({
     filter: {
       and: [
         {
@@ -249,8 +279,7 @@ export async function getUpcomingTasks(days: number = 7): Promise<Task[]> {
 }
 
 export async function getInProgressTasks(): Promise<Task[]> {
-  const response = await notion.databases.query({
-    database_id: DATABASE_ID,
+  const response = await queryTasksDatabase({
     filter: {
       ...buildStatusEqualsFilter(STATUS_IN_PROGRESS),
     },
@@ -261,8 +290,7 @@ export async function getInProgressTasks(): Promise<Task[]> {
 }
 
 export async function getNotStartedTasks(): Promise<Task[]> {
-  const response = await notion.databases.query({
-    database_id: DATABASE_ID,
+  const response = await queryTasksDatabase({
     filter: {
       ...buildStatusEqualsFilter(STATUS_NOT_STARTED),
     },
@@ -273,8 +301,7 @@ export async function getNotStartedTasks(): Promise<Task[]> {
 }
 
 export async function getAllIncompleteTasks(): Promise<Task[]> {
-  const response = await notion.databases.query({
-    database_id: DATABASE_ID,
+  const response = await queryTasksDatabase({
     filter: {
       ...buildStatusDoesNotEqualFilter(STATUS_DONE),
     },
@@ -288,8 +315,7 @@ export async function getAllIncompleteTasks(): Promise<Task[]> {
 }
 
 export async function searchTasks(query: string): Promise<Task[]> {
-  const response = await notion.databases.query({
-    database_id: DATABASE_ID,
+  const response = await queryTasksDatabase({
     filter: {
       and: [
         {
@@ -312,8 +338,7 @@ export async function searchTasks(query: string): Promise<Task[]> {
 export async function getOverdueTasks(): Promise<Task[]> {
   const today = new Date().toISOString().split("T")[0]
 
-  const response = await notion.databases.query({
-    database_id: DATABASE_ID,
+  const response = await queryTasksDatabase({
     filter: {
       and: [
         {
@@ -337,8 +362,7 @@ export async function getTasksByStatus(status: "Not started" | "In progress" | "
   const notionStatus =
     status === "Not started" ? STATUS_NOT_STARTED : status === "In progress" ? STATUS_IN_PROGRESS : STATUS_DONE
 
-  const response = await notion.databases.query({
-    database_id: DATABASE_ID,
+  const response = await queryTasksDatabase({
     filter: {
       ...buildStatusEqualsFilter(notionStatus),
     },
@@ -349,8 +373,7 @@ export async function getTasksByStatus(status: "Not started" | "In progress" | "
 }
 
 export async function getAllTasks(): Promise<Task[]> {
-  const response = await notion.databases.query({
-    database_id: DATABASE_ID,
+  const response = await queryTasksDatabase({
     filter: {
       ...buildStatusDoesNotEqualFilter(STATUS_DONE),
     },
