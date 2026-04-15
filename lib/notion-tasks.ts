@@ -9,13 +9,21 @@ const notion = new Client({
   auth: process.env.NOTION_API_KEY,
 })
 
-// Your Notion database ID
-const DATABASE_ID = "3428ab25d01e80d59fbac3783a7b2d3e"
+// Database and property configuration (override in env if needed)
+const DATABASE_ID = process.env.NOTION_DATABASE_ID || "3428ab25d01e80d59fbac3783a7b2d3e"
+const TASK_NAME_PROPERTY = process.env.NOTION_TASK_NAME_PROPERTY || "Task"
+const DUE_DATE_PROPERTY = process.env.NOTION_DUE_DATE_PROPERTY || "Due Date"
+const STATUS_PROPERTY = process.env.NOTION_STATUS_PROPERTY || "Status"
+const ASSIGNEE_PROPERTY = process.env.NOTION_ASSIGNEE_PROPERTY || "Assignee"
+
+const STATUS_DONE = process.env.NOTION_STATUS_DONE || "Done"
+const STATUS_IN_PROGRESS = process.env.NOTION_STATUS_IN_PROGRESS || "In progress"
+const STATUS_NOT_STARTED = process.env.NOTION_STATUS_NOT_STARTED || "To Do"
 
 export interface Task {
   id: string
   name: string
-  status: "Not started" | "In progress" | "Done"
+  status: string
   dueDate: string | null
   assignee: string | null
   latestComment: string | null
@@ -27,28 +35,28 @@ function extractTaskFromPage(page: PageObjectResponse): Task {
 
   // Extract task name (title property)
   let name = "Untitled"
-  const taskNameProp = properties["Task name"]
+  const taskNameProp = properties[TASK_NAME_PROPERTY]
   if (taskNameProp?.type === "title" && taskNameProp.title.length > 0) {
     name = taskNameProp.title.map((t: any) => t.plain_text).join("")
   }
 
   // Extract status
-  let status: Task["status"] = "Not started"
-  const statusProp = properties["Status"]
+  let status: Task["status"] = STATUS_NOT_STARTED
+  const statusProp = properties[STATUS_PROPERTY]
   if (statusProp?.type === "status" && statusProp.status) {
-    status = statusProp.status.name as Task["status"]
+    status = statusProp.status.name
   }
 
   // Extract due date
   let dueDate: string | null = null
-  const dueDateProp = properties["Due date"]
+  const dueDateProp = properties[DUE_DATE_PROPERTY]
   if (dueDateProp?.type === "date" && dueDateProp.date) {
     dueDate = dueDateProp.date.start
   }
 
   // Extract assignee
   let assignee: string | null = null
-  const assigneeProp = properties["Assignee"]
+  const assigneeProp = properties[ASSIGNEE_PROPERTY]
   if (assigneeProp?.type === "people" && assigneeProp.people.length > 0) {
     const person = assigneeProp.people[0]
     if ("name" in person && person.name) {
@@ -153,20 +161,20 @@ export async function getTodayTasks(): Promise<Task[]> {
     filter: {
       and: [
         {
-          property: "Due date",
+          property: DUE_DATE_PROPERTY,
           date: {
             equals: today,
           },
         },
         {
-          property: "Status",
+          property: STATUS_PROPERTY,
           status: {
-            does_not_equal: "Done",
+            does_not_equal: STATUS_DONE,
           },
         },
       ],
     },
-    sorts: [{ property: "Status", direction: "ascending" }],
+    sorts: [{ property: STATUS_PROPERTY, direction: "ascending" }],
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -182,26 +190,26 @@ export async function getUpcomingTasks(days: number = 7): Promise<Task[]> {
     filter: {
       and: [
         {
-          property: "Due date",
+          property: DUE_DATE_PROPERTY,
           date: {
             on_or_after: today.toISOString().split("T")[0],
           },
         },
         {
-          property: "Due date",
+          property: DUE_DATE_PROPERTY,
           date: {
             on_or_before: futureDate.toISOString().split("T")[0],
           },
         },
         {
-          property: "Status",
+          property: STATUS_PROPERTY,
           status: {
-            does_not_equal: "Done",
+            does_not_equal: STATUS_DONE,
           },
         },
       ],
     },
-    sorts: [{ property: "Due date", direction: "ascending" }],
+    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -211,12 +219,12 @@ export async function getInProgressTasks(): Promise<Task[]> {
   const response = await notion.databases.query({
     database_id: DATABASE_ID,
     filter: {
-      property: "Status",
+      property: STATUS_PROPERTY,
       status: {
-        equals: "In progress",
+        equals: STATUS_IN_PROGRESS,
       },
     },
-    sorts: [{ property: "Due date", direction: "ascending" }],
+    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -226,12 +234,12 @@ export async function getNotStartedTasks(): Promise<Task[]> {
   const response = await notion.databases.query({
     database_id: DATABASE_ID,
     filter: {
-      property: "Status",
+      property: STATUS_PROPERTY,
       status: {
-        equals: "Not started",
+        equals: STATUS_NOT_STARTED,
       },
     },
-    sorts: [{ property: "Due date", direction: "ascending" }],
+    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -241,14 +249,14 @@ export async function getAllIncompleteTasks(): Promise<Task[]> {
   const response = await notion.databases.query({
     database_id: DATABASE_ID,
     filter: {
-      property: "Status",
+      property: STATUS_PROPERTY,
       status: {
-        does_not_equal: "Done",
+        does_not_equal: STATUS_DONE,
       },
     },
     sorts: [
-      { property: "Status", direction: "ascending" },
-      { property: "Due date", direction: "ascending" },
+      { property: STATUS_PROPERTY, direction: "ascending" },
+      { property: DUE_DATE_PROPERTY, direction: "ascending" },
     ],
   })
 
@@ -261,20 +269,20 @@ export async function searchTasks(query: string): Promise<Task[]> {
     filter: {
       and: [
         {
-          property: "Task name",
+          property: TASK_NAME_PROPERTY,
           title: {
             contains: query,
           },
         },
         {
-          property: "Status",
+          property: STATUS_PROPERTY,
           status: {
-            does_not_equal: "Done",
+            does_not_equal: STATUS_DONE,
           },
         },
       ],
     },
-    sorts: [{ property: "Due date", direction: "ascending" }],
+    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -288,35 +296,38 @@ export async function getOverdueTasks(): Promise<Task[]> {
     filter: {
       and: [
         {
-          property: "Due date",
+          property: DUE_DATE_PROPERTY,
           date: {
             before: today,
           },
         },
         {
-          property: "Status",
+          property: STATUS_PROPERTY,
           status: {
-            does_not_equal: "Done",
+            does_not_equal: STATUS_DONE,
           },
         },
       ],
     },
-    sorts: [{ property: "Due date", direction: "ascending" }],
+    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
   })
 
   return enrichTasksWithComments(extractTasks(response))
 }
 
 export async function getTasksByStatus(status: "Not started" | "In progress" | "Done"): Promise<Task[]> {
+  const notionStatus =
+    status === "Not started" ? STATUS_NOT_STARTED : status === "In progress" ? STATUS_IN_PROGRESS : STATUS_DONE
+
   const response = await notion.databases.query({
     database_id: DATABASE_ID,
     filter: {
-      property: "Status",
+      property: STATUS_PROPERTY,
       status: {
-        equals: status,
+        equals: notionStatus,
       },
     },
-    sorts: [{ property: "Due date", direction: "ascending" }],
+    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -326,14 +337,14 @@ export async function getAllTasks(): Promise<Task[]> {
   const response = await notion.databases.query({
     database_id: DATABASE_ID,
     filter: {
-      property: "Status",
+      property: STATUS_PROPERTY,
       status: {
-        does_not_equal: "Done",
+        does_not_equal: STATUS_DONE,
       },
     },
     sorts: [
-      { property: "Due date", direction: "ascending" },
-      { property: "Status", direction: "ascending" },
+      { property: DUE_DATE_PROPERTY, direction: "ascending" },
+      { property: STATUS_PROPERTY, direction: "ascending" },
     ],
   })
 
@@ -347,7 +358,7 @@ export function formatTasksForTelegram(tasks: Task[], title: string): string {
 
   const taskLines = tasks.map((task, index) => {
     const statusIcon =
-      task.status === "In progress" ? "🔄" : task.status === "Done" ? "✅" : "⏳"
+      task.status === STATUS_IN_PROGRESS ? "🔄" : task.status === STATUS_DONE ? "✅" : "⏳"
     const dueDateStr = task.dueDate
       ? `Due: ${formatDate(task.dueDate)}`
       : "No due date"
