@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { sendMessage } from "@/lib/telegram"
 import { processUserMessage } from "@/lib/ai-agent"
 import {
+  getAllTasks,
   formatTasksForTelegram,
   getInProgressTasks,
   getOverdueTasks,
@@ -43,6 +44,24 @@ function normalizeQuickCommand(message: string): string {
     .replace(/^[^\p{L}\p{N}]+/u, "")
     .trim()
     .toLowerCase()
+}
+
+function getErrorText(error: unknown): string {
+  if (error && typeof error === "object") {
+    const maybeCode = "code" in error ? String((error as { code?: unknown }).code ?? "") : ""
+    const maybeStatus = "status" in error ? String((error as { status?: unknown }).status ?? "") : ""
+    const maybeMessage = "message" in error ? String((error as { message?: unknown }).message ?? "") : ""
+    const parts = [maybeCode, maybeStatus, maybeMessage].filter(Boolean)
+    if (parts.length > 0) {
+      return parts.join(" | ")
+    }
+  }
+
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  return "Unknown error"
 }
 
 export async function POST(request: Request) {
@@ -89,6 +108,22 @@ export async function POST(request: Request) {
           chatId,
           `📋 **Task Assistant Commands**\n\nYou can ask me in natural language:\n\n**Today's Tasks:**\n• "What do I need to do today?"\n• "Today's tasks"\n\n**Upcoming:**\n• "What's coming up this week?"\n• "Show upcoming tasks"\n\n**By Status:**\n• "Show tasks in progress"\n• "What's not started?"\n• "What have I completed?"\n\n**Overdue:**\n• "What's overdue?"\n• "Am I behind on anything?"\n\n**Search:**\n• "Find tasks about [keyword]"\n\nUse /menu anytime to open quick command buttons.`
         )
+        return NextResponse.json({ ok: true })
+      }
+
+      if (userMessage === "/debug") {
+        try {
+          const tasks = await getAllTasks()
+          await sendMessage(
+            chatId,
+            `✅ Debug OK\n\nNotion connection works.\nTasks fetched: ${tasks.length}\nDatabase ID: ${process.env.NOTION_DATABASE_ID || "using fallback in code"}`
+          )
+        } catch (debugError) {
+          await sendMessage(
+            chatId,
+            `❌ Debug failed\n\n${getErrorText(debugError)}\n\nCheck DB share + env vars on Vercel.`
+          )
+        }
         return NextResponse.json({ ok: true })
       }
 
@@ -149,7 +184,7 @@ export async function POST(request: Request) {
       console.error("[v0] Message processing error:", error)
       await sendMessage(
         chatId,
-        "⚠️ I couldn't fetch tasks right now. Please check your Notion database connection and try again."
+        `⚠️ I couldn't fetch tasks right now.\n\n${getErrorText(error)}\n\nSend /debug for connection details.`
       )
       return NextResponse.json({ ok: true })
     }
