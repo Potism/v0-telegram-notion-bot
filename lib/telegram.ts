@@ -57,25 +57,48 @@ export async function sendMessage(
   text: string,
   options: SendMessageOptions = {}
 ): Promise<boolean> {
-  const { parseMode = "Markdown", replyMarkup } = options
+  const { parseMode, replyMarkup } = options
 
   try {
+    const basePayload = {
+      chat_id: chatId,
+      text,
+      disable_web_page_preview: true,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    }
+
     const response = await fetch(getApiUrl("sendMessage"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: parseMode,
-        disable_web_page_preview: true,
-        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+        ...basePayload,
+        ...(parseMode ? { parse_mode: parseMode } : {}),
       }),
     })
 
     const result = await response.json()
-    return result.ok
+
+    if (result.ok) {
+      return true
+    }
+
+    // Retry once without parse mode in case formatting causes Telegram rejection.
+    if (parseMode) {
+      const retryResponse = await fetch(getApiUrl("sendMessage"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(basePayload),
+      })
+
+      const retryResult = await retryResponse.json()
+      return Boolean(retryResult.ok)
+    }
+
+    return false
   } catch (error) {
     console.error("Failed to send Telegram message:", error)
     return false
