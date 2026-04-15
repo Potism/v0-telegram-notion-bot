@@ -23,7 +23,11 @@ function formatTasksForDisplay(tasks: Task[], title: string): string {
         task.status === "Done" ? "✅" : task.status === "In progress" ? "🔄" : "⏳"
       const dueDateStr = task.dueDate ? ` (Due: ${task.dueDate})` : ""
       const assigneeStr = task.assignee ? ` - ${task.assignee}` : ""
-      return `${index + 1}. ${statusEmoji} ${task.name}${dueDateStr}${assigneeStr}`
+      const commentStr =
+        task.commentCount > 0 && task.latestComment
+          ? `\n   💬 ${task.commentCount} comment${task.commentCount > 1 ? "s" : ""}: ${task.latestComment}`
+          : ""
+      return `${index + 1}. ${statusEmoji} ${task.name}${dueDateStr}${assigneeStr}${commentStr}`
     })
     .join("\n")
 

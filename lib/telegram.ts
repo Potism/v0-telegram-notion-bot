@@ -31,7 +31,34 @@ export interface TelegramUpdate {
   }
 }
 
-export async function sendMessage(chatId: number | string, text: string, parseMode: "Markdown" | "MarkdownV2" | "HTML" = "Markdown"): Promise<boolean> {
+interface TelegramKeyboardButton {
+  text: string
+}
+
+interface TelegramReplyKeyboardMarkup {
+  keyboard: TelegramKeyboardButton[][]
+  resize_keyboard?: boolean
+  one_time_keyboard?: boolean
+  selective?: boolean
+}
+
+interface TelegramReplyKeyboardRemove {
+  remove_keyboard: true
+  selective?: boolean
+}
+
+interface SendMessageOptions {
+  parseMode?: "Markdown" | "MarkdownV2" | "HTML"
+  replyMarkup?: TelegramReplyKeyboardMarkup | TelegramReplyKeyboardRemove
+}
+
+export async function sendMessage(
+  chatId: number | string,
+  text: string,
+  options: SendMessageOptions = {}
+): Promise<boolean> {
+  const { parseMode = "Markdown", replyMarkup } = options
+
   try {
     const response = await fetch(getApiUrl("sendMessage"), {
       method: "POST",
@@ -43,6 +70,7 @@ export async function sendMessage(chatId: number | string, text: string, parseMo
         text,
         parse_mode: parseMode,
         disable_web_page_preview: true,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
       }),
     })
 

@@ -18,6 +18,8 @@ export interface Task {
   status: "Not started" | "In progress" | "Done"
   dueDate: string | null
   assignee: string | null
+  latestComment: string | null
+  commentCount: number
 }
 
 function extractTaskFromPage(page: PageObjectResponse): Task {
@@ -27,7 +29,7 @@ function extractTaskFromPage(page: PageObjectResponse): Task {
   let name = "Untitled"
   const taskNameProp = properties["Task name"]
   if (taskNameProp?.type === "title" && taskNameProp.title.length > 0) {
-    name = taskNameProp.title.map((t) => t.plain_text).join("")
+    name = taskNameProp.title.map((t: any) => t.plain_text).join("")
   }
 
   // Extract status
@@ -60,13 +62,87 @@ function extractTaskFromPage(page: PageObjectResponse): Task {
     status,
     dueDate,
     assignee,
+    latestComment: null,
+    commentCount: 0,
   }
 }
 
 function extractTasks(response: QueryDatabaseResponse): Task[] {
   return response.results
-    .filter((page): page is PageObjectResponse => "properties" in page)
+    .filter((page: any): page is PageObjectResponse => "properties" in page)
     .map(extractTaskFromPage)
+}
+
+function truncateComment(comment: string, maxLength: number = 120): string {
+  if (comment.length <= maxLength) {
+    return comment
+  }
+  return `${comment.slice(0, maxLength - 3)}...`
+}
+
+async function getCommentSummary(pageId: string): Promise<Pick<Task, "latestComment" | "commentCount">> {
+  try {
+    const commentsResponse = await notion.comments.list({
+      block_id: pageId,
+      page_size: 50,
+    })
+
+    const comments = commentsResponse.results
+      .map((comment: any) => {
+        if (!("rich_text" in comment)) {
+          return null
+        }
+
+        const text = comment.rich_text
+          .map((token: any) => ("plain_text" in token ? token.plain_text : ""))
+          .join("")
+          .trim()
+
+        if (!text) {
+          return null
+        }
+
+        return {
+          text,
+          createdTime: "created_time" in comment ? comment.created_time : "",
+        }
+      })
+      .filter(
+        (comment: { text: string; createdTime: string } | null): comment is { text: string; createdTime: string } =>
+          Boolean(comment)
+      )
+
+    if (comments.length === 0) {
+      return { latestComment: null, commentCount: 0 }
+    }
+
+    const latestComment = comments.reduce((latest: { text: string; createdTime: string }, current: { text: string; createdTime: string }) => {
+      if (new Date(current.createdTime).getTime() > new Date(latest.createdTime).getTime()) {
+        return current
+      }
+      return latest
+    })
+
+    return {
+      latestComment: truncateComment(latestComment.text),
+      commentCount: comments.length,
+    }
+  } catch (error) {
+    console.warn(`[v0] Could not fetch comments for page ${pageId}:`, error)
+    return { latestComment: null, commentCount: 0 }
+  }
+}
+
+async function enrichTasksWithComments(tasks: Task[]): Promise<Task[]> {
+  return Promise.all(
+    tasks.map(async (task) => {
+      const commentSummary = await getCommentSummary(task.id)
+      return {
+        ...task,
+        ...commentSummary,
+      }
+    })
+  )
 }
 
 export async function getTodayTasks(): Promise<Task[]> {
@@ -93,7 +169,7 @@ export async function getTodayTasks(): Promise<Task[]> {
     sorts: [{ property: "Status", direction: "ascending" }],
   })
 
-  return extractTasks(response)
+  return enrichTasksWithComments(extractTasks(response))
 }
 
 export async function getUpcomingTasks(days: number = 7): Promise<Task[]> {
@@ -128,7 +204,7 @@ export async function getUpcomingTasks(days: number = 7): Promise<Task[]> {
     sorts: [{ property: "Due date", direction: "ascending" }],
   })
 
-  return extractTasks(response)
+  return enrichTasksWithComments(extractTasks(response))
 }
 
 export async function getInProgressTasks(): Promise<Task[]> {
@@ -143,7 +219,7 @@ export async function getInProgressTasks(): Promise<Task[]> {
     sorts: [{ property: "Due date", direction: "ascending" }],
   })
 
-  return extractTasks(response)
+  return enrichTasksWithComments(extractTasks(response))
 }
 
 export async function getNotStartedTasks(): Promise<Task[]> {
@@ -158,7 +234,7 @@ export async function getNotStartedTasks(): Promise<Task[]> {
     sorts: [{ property: "Due date", direction: "ascending" }],
   })
 
-  return extractTasks(response)
+  return enrichTasksWithComments(extractTasks(response))
 }
 
 export async function getAllIncompleteTasks(): Promise<Task[]> {
@@ -176,7 +252,7 @@ export async function getAllIncompleteTasks(): Promise<Task[]> {
     ],
   })
 
-  return extractTasks(response)
+  return enrichTasksWithComments(extractTasks(response))
 }
 
 export async function searchTasks(query: string): Promise<Task[]> {
@@ -201,7 +277,7 @@ export async function searchTasks(query: string): Promise<Task[]> {
     sorts: [{ property: "Due date", direction: "ascending" }],
   })
 
-  return extractTasks(response)
+  return enrichTasksWithComments(extractTasks(response))
 }
 
 export async function getOverdueTasks(): Promise<Task[]> {
@@ -228,7 +304,7 @@ export async function getOverdueTasks(): Promise<Task[]> {
     sorts: [{ property: "Due date", direction: "ascending" }],
   })
 
-  return extractTasks(response)
+  return enrichTasksWithComments(extractTasks(response))
 }
 
 export async function getTasksByStatus(status: "Not started" | "In progress" | "Done"): Promise<Task[]> {
@@ -243,7 +319,7 @@ export async function getTasksByStatus(status: "Not started" | "In progress" | "
     sorts: [{ property: "Due date", direction: "ascending" }],
   })
 
-  return extractTasks(response)
+  return enrichTasksWithComments(extractTasks(response))
 }
 
 export async function getAllTasks(): Promise<Task[]> {
@@ -261,7 +337,7 @@ export async function getAllTasks(): Promise<Task[]> {
     ],
   })
 
-  return extractTasks(response)
+  return enrichTasksWithComments(extractTasks(response))
 }
 
 export function formatTasksForTelegram(tasks: Task[], title: string): string {
@@ -276,8 +352,9 @@ export function formatTasksForTelegram(tasks: Task[], title: string): string {
       ? `Due: ${formatDate(task.dueDate)}`
       : "No due date"
     const assigneeStr = task.assignee ? `Assigned to: ${task.assignee}` : ""
+    const commentsStr = task.commentCount > 0 ? `\n   💬 Comments (${task.commentCount}): ${task.latestComment}` : ""
 
-    return `${index + 1}. ${task.name}\n   ${statusIcon} ${task.status} | ${dueDateStr}${assigneeStr ? ` | ${assigneeStr}` : ""}`
+    return `${index + 1}. ${task.name}\n   ${statusIcon} ${task.status} | ${dueDateStr}${assigneeStr ? ` | ${assigneeStr}` : ""}${commentsStr}`
   })
 
   return `${title}\n\n${taskLines.join("\n\n")}`
