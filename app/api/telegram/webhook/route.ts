@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server"
 import { sendMessage } from "@/lib/telegram"
 import { processUserMessage } from "@/lib/ai-agent"
+import {
+  formatTasksForTelegram,
+  getInProgressTasks,
+  getOverdueTasks,
+  getTodayTasks,
+  getUpcomingTasks,
+} from "@/lib/notion-tasks"
 
 interface TelegramUpdate {
   update_id: number
@@ -30,6 +37,13 @@ const MAIN_MENU_KEYBOARD = {
   resize_keyboard: true,
   one_time_keyboard: false,
 } as const
+
+function normalizeQuickCommand(message: string): string {
+  return message
+    .replace(/^[^\p{L}\p{N}]+/u, "")
+    .trim()
+    .toLowerCase()
+}
 
 export async function POST(request: Request) {
   try {
@@ -74,6 +88,54 @@ export async function POST(request: Request) {
         chatId,
         `📋 **Task Assistant Commands**\n\nYou can ask me in natural language:\n\n**Today's Tasks:**\n• "What do I need to do today?"\n• "Today's tasks"\n\n**Upcoming:**\n• "What's coming up this week?"\n• "Show upcoming tasks"\n\n**By Status:**\n• "Show tasks in progress"\n• "What's not started?"\n• "What have I completed?"\n\n**Overdue:**\n• "What's overdue?"\n• "Am I behind on anything?"\n\n**Search:**\n• "Find tasks about [keyword]"\n\nUse /menu anytime to open quick command buttons.`
       )
+      return NextResponse.json({ ok: true })
+    }
+
+    const normalizedMessage = normalizeQuickCommand(userMessage)
+
+    // Handle quick menu commands directly (without AI dependency).
+    if (normalizedMessage === "what tasks do i have today?") {
+      const tasks = await getTodayTasks()
+      await sendMessage(chatId, formatTasksForTelegram(tasks, "📅 Tasks Due Today"))
+      return NextResponse.json({ ok: true })
+    }
+
+    if (normalizedMessage === "show upcoming tasks") {
+      const tasks = await getUpcomingTasks(7)
+      await sendMessage(chatId, formatTasksForTelegram(tasks, "📆 Upcoming Tasks (Next 7 Days)"))
+      return NextResponse.json({ ok: true })
+    }
+
+    if (normalizedMessage === "what's overdue?" || normalizedMessage === "whats overdue?") {
+      const tasks = await getOverdueTasks()
+      await sendMessage(chatId, formatTasksForTelegram(tasks, "⚠️ Overdue Tasks"))
+      return NextResponse.json({ ok: true })
+    }
+
+    if (normalizedMessage === "show tasks in progress") {
+      const tasks = await getInProgressTasks()
+      await sendMessage(chatId, formatTasksForTelegram(tasks, "🔄 Tasks In Progress"))
+      return NextResponse.json({ ok: true })
+    }
+
+    if (normalizedMessage === "what should i do next?") {
+      const overdueTasks = await getOverdueTasks()
+      if (overdueTasks.length > 0) {
+        await sendMessage(
+          chatId,
+          `Prioritize overdue items first.\n\n${formatTasksForTelegram(overdueTasks, "⚠️ Overdue Tasks")}`
+        )
+        return NextResponse.json({ ok: true })
+      }
+
+      const todayTasks = await getTodayTasks()
+      if (todayTasks.length > 0) {
+        await sendMessage(chatId, formatTasksForTelegram(todayTasks, "📅 Start With Today's Tasks"))
+        return NextResponse.json({ ok: true })
+      }
+
+      const upcomingTasks = await getUpcomingTasks(7)
+      await sendMessage(chatId, formatTasksForTelegram(upcomingTasks, "📆 Next Up (7 Days)"))
       return NextResponse.json({ ok: true })
     }
 
