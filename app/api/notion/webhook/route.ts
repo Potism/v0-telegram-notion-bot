@@ -68,5 +68,6 @@ export async function GET() {
   return NextResponse.json({
     status: "Notion webhook endpoint is active",
     pendingVerification: pendingVerificationToken ? "Yes" : "No",
+    verificationToken: pendingVerificationToken || "No token received yet. Click 'Resend token' in Notion first.",
   })
 }
