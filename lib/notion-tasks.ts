@@ -15,9 +15,10 @@ const TASK_NAME_PROPERTY = process.env.NOTION_TASK_NAME_PROPERTY || "Task"
 const DUE_DATE_PROPERTY = process.env.NOTION_DUE_DATE_PROPERTY || "Due Date"
 const STATUS_PROPERTY = process.env.NOTION_STATUS_PROPERTY || "Status"
 const ASSIGNEE_PROPERTY = process.env.NOTION_ASSIGNEE_PROPERTY || "Assignee"
+const STATUS_FILTER_TYPE = (process.env.NOTION_STATUS_FILTER_TYPE || "select").toLowerCase()
 
 const STATUS_DONE = process.env.NOTION_STATUS_DONE || "Done"
-const STATUS_IN_PROGRESS = process.env.NOTION_STATUS_IN_PROGRESS || "In progress"
+const STATUS_IN_PROGRESS = process.env.NOTION_STATUS_IN_PROGRESS || "In Progress"
 const STATUS_NOT_STARTED = process.env.NOTION_STATUS_NOT_STARTED || "To Do"
 
 export interface Task {
@@ -45,6 +46,8 @@ function extractTaskFromPage(page: PageObjectResponse): Task {
   const statusProp = properties[STATUS_PROPERTY]
   if (statusProp?.type === "status" && statusProp.status) {
     status = statusProp.status.name
+  } else if (statusProp?.type === "select" && statusProp.select) {
+    status = statusProp.select.name
   }
 
   // Extract due date
@@ -72,6 +75,42 @@ function extractTaskFromPage(page: PageObjectResponse): Task {
     assignee,
     latestComment: null,
     commentCount: 0,
+  }
+}
+
+function buildStatusEqualsFilter(value: string) {
+  if (STATUS_FILTER_TYPE === "status") {
+    return {
+      property: STATUS_PROPERTY,
+      status: {
+        equals: value,
+      },
+    }
+  }
+
+  return {
+    property: STATUS_PROPERTY,
+    select: {
+      equals: value,
+    },
+  }
+}
+
+function buildStatusDoesNotEqualFilter(value: string) {
+  if (STATUS_FILTER_TYPE === "status") {
+    return {
+      property: STATUS_PROPERTY,
+      status: {
+        does_not_equal: value,
+      },
+    }
+  }
+
+  return {
+    property: STATUS_PROPERTY,
+    select: {
+      does_not_equal: value,
+    },
   }
 }
 
@@ -167,10 +206,7 @@ export async function getTodayTasks(): Promise<Task[]> {
           },
         },
         {
-          property: STATUS_PROPERTY,
-          status: {
-            does_not_equal: STATUS_DONE,
-          },
+          ...buildStatusDoesNotEqualFilter(STATUS_DONE),
         },
       ],
     },
@@ -202,10 +238,7 @@ export async function getUpcomingTasks(days: number = 7): Promise<Task[]> {
           },
         },
         {
-          property: STATUS_PROPERTY,
-          status: {
-            does_not_equal: STATUS_DONE,
-          },
+          ...buildStatusDoesNotEqualFilter(STATUS_DONE),
         },
       ],
     },
@@ -219,10 +252,7 @@ export async function getInProgressTasks(): Promise<Task[]> {
   const response = await notion.databases.query({
     database_id: DATABASE_ID,
     filter: {
-      property: STATUS_PROPERTY,
-      status: {
-        equals: STATUS_IN_PROGRESS,
-      },
+      ...buildStatusEqualsFilter(STATUS_IN_PROGRESS),
     },
     sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
   })
@@ -234,10 +264,7 @@ export async function getNotStartedTasks(): Promise<Task[]> {
   const response = await notion.databases.query({
     database_id: DATABASE_ID,
     filter: {
-      property: STATUS_PROPERTY,
-      status: {
-        equals: STATUS_NOT_STARTED,
-      },
+      ...buildStatusEqualsFilter(STATUS_NOT_STARTED),
     },
     sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
   })
@@ -249,10 +276,7 @@ export async function getAllIncompleteTasks(): Promise<Task[]> {
   const response = await notion.databases.query({
     database_id: DATABASE_ID,
     filter: {
-      property: STATUS_PROPERTY,
-      status: {
-        does_not_equal: STATUS_DONE,
-      },
+      ...buildStatusDoesNotEqualFilter(STATUS_DONE),
     },
     sorts: [
       { property: STATUS_PROPERTY, direction: "ascending" },
@@ -275,10 +299,7 @@ export async function searchTasks(query: string): Promise<Task[]> {
           },
         },
         {
-          property: STATUS_PROPERTY,
-          status: {
-            does_not_equal: STATUS_DONE,
-          },
+          ...buildStatusDoesNotEqualFilter(STATUS_DONE),
         },
       ],
     },
@@ -302,10 +323,7 @@ export async function getOverdueTasks(): Promise<Task[]> {
           },
         },
         {
-          property: STATUS_PROPERTY,
-          status: {
-            does_not_equal: STATUS_DONE,
-          },
+          ...buildStatusDoesNotEqualFilter(STATUS_DONE),
         },
       ],
     },
@@ -322,10 +340,7 @@ export async function getTasksByStatus(status: "Not started" | "In progress" | "
   const response = await notion.databases.query({
     database_id: DATABASE_ID,
     filter: {
-      property: STATUS_PROPERTY,
-      status: {
-        equals: notionStatus,
-      },
+      ...buildStatusEqualsFilter(notionStatus),
     },
     sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
   })
@@ -337,10 +352,7 @@ export async function getAllTasks(): Promise<Task[]> {
   const response = await notion.databases.query({
     database_id: DATABASE_ID,
     filter: {
-      property: STATUS_PROPERTY,
-      status: {
-        does_not_equal: STATUS_DONE,
-      },
+      ...buildStatusDoesNotEqualFilter(STATUS_DONE),
     },
     sorts: [
       { property: DUE_DATE_PROPERTY, direction: "ascending" },
