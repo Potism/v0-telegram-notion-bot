@@ -307,23 +307,51 @@ function buildActiveTaskFilters(): Record<string, unknown>[] {
   return filters
 }
 
+function isSortPropertyNotFoundError(responseData: unknown): boolean {
+  if (!responseData || typeof responseData !== "object") return false
+  const data = responseData as { code?: string; message?: string }
+  if (data.code !== "validation_error" || typeof data.message !== "string") return false
+  const m = data.message.toLowerCase()
+  return m.includes("sort property") || m.includes("sort property with name")
+}
+
 async function queryTasksDatabase(options: QueryTasksDatabaseOptions): Promise<QueryDatabaseResponse> {
   const notionApiKey = process.env.NOTION_API_KEY
   if (!notionApiKey) {
     throw new Error("NOTION_API_KEY is not set")
   }
 
-  const response = await fetch(`https://api.notion.com/v1/databases/${DATABASE_ID}/query`, {
+  const url = `https://api.notion.com/v1/databases/${DATABASE_ID}/query`
+  const headers = {
+    Authorization: `Bearer ${notionApiKey}`,
+    "Notion-Version": "2022-06-28",
+    "Content-Type": "application/json",
+  }
+
+  let response = await fetch(url, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${notionApiKey}`,
-      "Notion-Version": "2022-06-28",
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify(options),
   })
 
-  const responseData = await response.json()
+  let responseData = await response.json()
+
+  // Retry without sorts if property names differ (e.g. "Due date" vs "Due Date").
+  if (
+    !response.ok &&
+    options.sorts &&
+    options.sorts.length > 0 &&
+    isSortPropertyNotFoundError(responseData)
+  ) {
+    const { sorts: _removed, ...withoutSorts } = options
+    response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(withoutSorts),
+    })
+    responseData = await response.json()
+  }
+
   if (!response.ok) {
     const code = typeof responseData?.code === "string" ? responseData.code : "unknown_error"
     const message =

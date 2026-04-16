@@ -168,7 +168,7 @@ The bot reads these **exact** property names unless you override with env:
 | Notion property | Env variable | Default |
 |-----------------|--------------|---------|
 | Title | `NOTION_TASK_NAME_PROPERTY` | `Name` |
-| Due Date | `NOTION_DUE_DATE_PROPERTY` | `Due Date` |
+| Due Date | `NOTION_DUE_DATE_PROPERTY` | `Due Date` (must match **exact** column name in Notion, including spaces and capitalization — e.g. `Due date` if you renamed it) |
 | Shoot / live date | `NOTION_SHOOT_LIVE_DATE_PROPERTY` | `Shoot / live date` (set empty to disable) |
 | Status | `NOTION_STATUS_PROPERTY` | `Status` |
 | Assignee | `NOTION_ASSIGNEE_PROPERTY` | `Assignee` |
