@@ -264,6 +264,40 @@ function buildStatusOrEqualsFilter(statuses: string[]) {
   }
 }
 
+function compactFilters(filters: Array<Record<string, unknown> | null | undefined>): Record<string, unknown>[] {
+  return filters.filter((f): f is Record<string, unknown> => Boolean(f))
+}
+
+function buildDateEqualsFilter(propertyName: string, dateValue: string): Record<string, unknown> | null {
+  const property = propertyName.trim()
+  if (!property) return null
+  return {
+    property,
+    date: { equals: dateValue },
+  }
+}
+
+function buildDateRangeFilter(
+  propertyName: string,
+  start: string,
+  end: string
+): Record<string, unknown> | null {
+  const property = propertyName.trim()
+  if (!property) return null
+  return {
+    and: [
+      { property, date: { on_or_after: start } },
+      { property, date: { on_or_before: end } },
+    ],
+  }
+}
+
+function buildOptionalOrFilter(filters: Record<string, unknown>[]): Record<string, unknown> | null {
+  if (filters.length === 0) return null
+  if (filters.length === 1) return filters[0]
+  return { or: filters }
+}
+
 /** Active work items: not Done and not On hold (if On hold exists). */
 function buildActiveTaskFilters(): Record<string, unknown>[] {
   const filters: Record<string, unknown>[] = [buildStatusDoesNotEqualFilter(STATUS_DONE)]
@@ -370,16 +404,18 @@ const todayIso = () => new Date().toISOString().split("T")[0]
 
 export async function getTodayTasks(): Promise<Task[]> {
   const today = todayIso()
-  const dateOrBranches: Record<string, unknown>[] = [
-    { property: DUE_DATE_PROPERTY, date: { equals: today } },
-  ]
-  if (SHOOT_LIVE_DATE_PROPERTY) {
-    dateOrBranches.push({ property: SHOOT_LIVE_DATE_PROPERTY, date: { equals: today } })
+  const dateOrBranches = compactFilters([
+    buildDateEqualsFilter(DUE_DATE_PROPERTY, today),
+    buildDateEqualsFilter(SHOOT_LIVE_DATE_PROPERTY, today),
+  ])
+  const dateFilter = buildOptionalOrFilter(dateOrBranches)
+  if (!dateFilter) {
+    throw new Error("Date filters are not configured. Set NOTION_DUE_DATE_PROPERTY in env.")
   }
 
   const response = await queryTasksDatabase({
     filter: {
-      and: [{ or: dateOrBranches }, ...buildActiveTaskFilters()],
+      and: [dateFilter, ...buildActiveTaskFilters()],
     },
     sorts: [
       { property: PRIORITY_PROPERTY, direction: "ascending" },
@@ -396,30 +432,19 @@ export async function getUpcomingTasks(days: number = 7): Promise<Task[]> {
   futureDate.setDate(today.getDate() + days)
   const start = today.toISOString().split("T")[0]
   const end = futureDate.toISOString().split("T")[0]
+  const dateRangeBranches = compactFilters([
+    buildDateRangeFilter(DUE_DATE_PROPERTY, start, end),
+    buildDateRangeFilter(SHOOT_LIVE_DATE_PROPERTY, start, end),
+  ])
+  const dateRangeFilter = buildOptionalOrFilter(dateRangeBranches)
+  if (!dateRangeFilter) {
+    throw new Error("Date range filters are not configured. Set NOTION_DUE_DATE_PROPERTY in env.")
+  }
 
   const response = await queryTasksDatabase({
     filter: {
       and: [
-        {
-          or: [
-            {
-              and: [
-                { property: DUE_DATE_PROPERTY, date: { on_or_after: start } },
-                { property: DUE_DATE_PROPERTY, date: { on_or_before: end } },
-              ],
-            },
-            ...(SHOOT_LIVE_DATE_PROPERTY
-              ? [
-                  {
-                    and: [
-                      { property: SHOOT_LIVE_DATE_PROPERTY, date: { on_or_after: start } },
-                      { property: SHOOT_LIVE_DATE_PROPERTY, date: { on_or_before: end } },
-                    ],
-                  },
-                ]
-              : []),
-          ],
-        },
+        dateRangeFilter,
         ...buildActiveTaskFilters(),
       ],
     },
@@ -480,12 +505,20 @@ export async function getBlockedTasks(): Promise<Task[]> {
       rich_text: { is_not_empty: true },
     })
   }
-  orFilters.push(buildStatusEqualsFilter(STATUS_ON_HOLD))
+  if (STATUS_ON_HOLD.trim()) {
+    orFilters.push(buildStatusEqualsFilter(STATUS_ON_HOLD))
+  }
+  const blockedFilter = buildOptionalOrFilter(orFilters)
+  if (!blockedFilter) {
+    throw new Error(
+      "Blocked filter is not configured. Set NOTION_BLOCKED_BY_PROPERTY and/or NOTION_STATUS_ON_HOLD."
+    )
+  }
 
   const response = await queryTasksDatabase({
     filter: {
       and: [
-        { or: orFilters },
+        blockedFilter,
         buildStatusDoesNotEqualFilter(STATUS_DONE),
       ],
     },
