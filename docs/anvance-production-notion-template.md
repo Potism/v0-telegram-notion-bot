@@ -199,6 +199,56 @@ If your Notion options use different spelling (e.g. “Internal Review”), eith
 
 Today · Upcoming · Overdue · In production · What next · **Team queue** · **Needs review** · **Blocked** — plus `/menu`, `/debug`, and natural-language questions via the AI path.
 
+---
+
+## 6b. Assignment pings (Notion → Telegram)
+
+When someone is set on **Assignee** in Production, the app can **DM** them on Telegram (and optionally post to a **team group**).
+
+### 1) Notion → your app
+
+1. In Notion: **Settings → Integrations → your integration → Webhooks** (or the Webhooks tab for your internal integration).
+2. Add endpoint: `https://<your-vercel-domain>/api/notion/webhook`
+3. Subscribe to at least:
+   - `page.created` (new row with assignee)
+   - `page.properties_updated` (assignee changed — batched by Notion; [event docs](https://developers.notion.com/reference/webhooks-events-delivery))
+
+Complete verification if Notion asks for a challenge.
+
+### 2) Map Notion people → Telegram
+
+Set **`TELEGRAM_NOTION_USER_MAP`** in Vercel (JSON array). Each person who should get DMs needs one row.
+
+```json
+[
+  { "notionUserId": "17ed872b-594c-8192-b233-000238bdfc6a", "telegramChatId": "123456789" }
+]
+```
+
+- **`notionUserId`**: Notion workspace member UUID (same format as in People on a page — you can copy from a Notion profile URL or from the API).
+- **`telegramChatId`**: Telegram numeric ID for **private chat** with the bot (users can message [@userinfobot](https://t.me/userinfobot) to learn their id). The user must **/start** your bot once so DMs are allowed.
+
+### 3) Optional: team channel
+
+- **`TELEGRAM_ASSIGNMENT_GROUP_ID`**: id of a group/supergroup (e.g. `-100…`) where short “someone was assigned” lines are posted.
+- **`TELEGRAM_ASSIGNMENT_NOTIFY_MODE`**: `dm` (default) | `group` | `both`.
+
+### 4) Toggles & env
+
+| Variable | Purpose |
+|----------|---------|
+| `NOTIF_ASSIGNMENT_ENABLED` | `false` to turn off all assignment notifications. Default: on if map or group id is set. |
+| `NOTION_WEBHOOK_DEBUG` | Set `true` to log event type + entity id (not full payload). |
+
+Same **`NOTION_API_KEY`**, **`NOTION_DATABASE_ID`**, and property names as the bot (`Assignee`, `Name`, `Due date`, etc.) are used when reading the page after each event.
+
+### UX behaviour
+
+- **`page.properties_updated`**: only runs the assignee flow if Notion reports that the **Assignee** column was among the updated properties (reduces noise when editing notes or dates).
+- **`page.created`**: notifies if the new row has assignees and they are in the map.
+- Messages are **plain text** (no Markdown) so client names and titles do not break Telegram.
+- Each mapped assignee gets a short DM with task title, client, status, due date, and a **Open in Notion** link.
+
 ### Reference: Production CSV export (column headers)
 
 If you export **Production → All → Export → CSV**, the header row should match what the bot expects. Verified example:
