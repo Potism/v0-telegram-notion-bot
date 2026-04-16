@@ -4,8 +4,11 @@ import { processUserMessage } from "@/lib/ai-agent"
 import {
   getAllTasks,
   formatTasksForTelegram,
+  getBlockedTasks,
   getInProgressTasks,
   getOverdueTasks,
+  getPipelineQueueTasks,
+  getReviewTasks,
   getTodayTasks,
   getUpcomingTasks,
 } from "@/lib/notion-tasks"
@@ -32,7 +35,9 @@ const MAIN_MENU_KEYBOARD = {
   keyboard: [
     [{ text: "📅 What tasks do I have today?" }],
     [{ text: "📆 Show upcoming tasks" }, { text: "⚠️ What's overdue?" }],
-    [{ text: "🔄 Show tasks in progress" }, { text: "🧭 What should I do next?" }],
+    [{ text: "🔄 In production" }, { text: "🧭 What should I do next?" }],
+    [{ text: "📥 Team queue" }, { text: "👀 Needs review" }],
+    [{ text: "🚫 Blocked" }],
     [{ text: "❓ Help" }, { text: "🙈 Hide keyboard" }],
   ],
   resize_keyboard: true,
@@ -83,8 +88,8 @@ export async function POST(request: Request) {
         await sendMessage(
           chatId,
           userMessage === "/start"
-            ? `Hello ${userName}! 👋\n\nI'm your Notion Task Assistant. You can tap a button below for quick commands, or type your own question anytime.`
-            : `📌 Menu opened. Tap a quick command below, or type your own question anytime.`,
+            ? `Hello ${userName}! 👋\n\nAnvance Production — your Notion board in Telegram. Tap a button below or ask anything (today, queue, review, blocked, Photo/Video tasks…).`
+            : `📌 Menu opened — Anvance Production. Tap a quick command or ask in your own words.`,
           {
             replyMarkup: MAIN_MENU_KEYBOARD,
           }
@@ -106,7 +111,7 @@ export async function POST(request: Request) {
       if (userMessage === "/help" || userMessage === "❓ Help") {
         await sendMessage(
           chatId,
-          `📋 **Task Assistant Commands**\n\nYou can ask me in natural language:\n\n**Today's Tasks:**\n• "What do I need to do today?"\n• "Today's tasks"\n\n**Upcoming:**\n• "What's coming up this week?"\n• "Show upcoming tasks"\n\n**By Status:**\n• "Show tasks in progress"\n• "What's not started?"\n• "What have I completed?"\n\n**Overdue:**\n• "What's overdue?"\n• "Am I behind on anything?"\n\n**Search:**\n• "Find tasks about [keyword]"\n\nUse /menu anytime to open quick command buttons.`
+          `📋 **Anvance Production — Bot**\n\n**Buttons:** Today, Upcoming, Overdue, In production, What next, Team queue, Needs review, Blocked.\n\n**Commands:** /menu /debug\n\n**Ask in chat:** e.g. "Show Client review", "Photo tasks this week", "What's blocked?"\n\nNotion is the source of truth; this bot is for fast visibility.`
         )
         return NextResponse.json({ ok: true })
       }
@@ -138,7 +143,7 @@ export async function POST(request: Request) {
 
       if (normalizedMessage === "show upcoming tasks") {
         const tasks = await getUpcomingTasks(7)
-        await sendMessage(chatId, formatTasksForTelegram(tasks, "📆 Upcoming Tasks (Next 7 Days)"))
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "📆 Upcoming (next 7 days)"))
         return NextResponse.json({ ok: true })
       }
 
@@ -148,9 +153,27 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true })
       }
 
-      if (normalizedMessage === "show tasks in progress") {
+      if (normalizedMessage === "show tasks in progress" || normalizedMessage === "in production") {
         const tasks = await getInProgressTasks()
-        await sendMessage(chatId, formatTasksForTelegram(tasks, "🔄 Tasks In Progress"))
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "🔄 In production"))
+        return NextResponse.json({ ok: true })
+      }
+
+      if (normalizedMessage === "team queue") {
+        const tasks = await getPipelineQueueTasks()
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "📥 Team queue (Intake / Briefing / Scheduled)"))
+        return NextResponse.json({ ok: true })
+      }
+
+      if (normalizedMessage === "needs review") {
+        const tasks = await getReviewTasks()
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "👀 Needs review"))
+        return NextResponse.json({ ok: true })
+      }
+
+      if (normalizedMessage === "blocked") {
+        const tasks = await getBlockedTasks()
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "🚫 Blocked / on hold"))
         return NextResponse.json({ ok: true })
       }
 
