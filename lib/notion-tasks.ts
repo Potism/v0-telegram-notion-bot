@@ -744,7 +744,7 @@ function formatTaskDetailLines(task: Task): string {
       ? ` | Shoot/Live: ${formatDate(task.shootOrLiveDate)}`
       : ""
   parts.push(`   ${due}${shoot}`)
-  if (task.assignee) parts.push(`   Owner: ${task.assignee}`)
+  if (task.assignee) parts.push(`   Assignee: ${task.assignee}`)
   if (task.collaborators) parts.push(`   Collaborators: ${task.collaborators}`)
   if (task.reviewer) parts.push(`   Reviewer: ${task.reviewer}`)
   if (task.clientApproval) parts.push(`   Client approval: ${task.clientApproval}`)
