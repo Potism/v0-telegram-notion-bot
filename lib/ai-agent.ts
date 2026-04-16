@@ -1,6 +1,6 @@
 "use server"
 
-import { generateText, tool } from "ai"
+import { streamText, tool, stepCountIs } from "ai"
 import { z } from "zod"
 import {
   getTodayTasks,
@@ -18,7 +18,28 @@ import {
   formatTasksForTelegram,
 } from "./notion-tasks"
 
-export async function processUserMessage(userMessage: string): Promise<string> {
+const DEFAULT_AI_MODEL = "openai/gpt-4o-mini"
+
+function resolveModelId(): string {
+  const m =
+    process.env.ANVANCE_AI_MODEL?.trim() ||
+    process.env.OPENAI_MODEL?.trim() ||
+    process.env.VERCEL_AI_MODEL?.trim()
+  return m || DEFAULT_AI_MODEL
+}
+
+/** Optional: pass Telegram context so the model can mention /mytasks vs onboarding. */
+export type AiTelegramContext = {
+  telegramUserId: number
+  displayName: string
+  notionLinked: boolean
+  chatType: string
+}
+
+export async function processUserMessage(
+  userMessage: string,
+  telegram?: AiTelegramContext
+): Promise<string> {
   const tools = {
     getTodayTasks: tool({
       description: "Tasks due today OR shoot/live date today (Anvance Production board)",
@@ -147,11 +168,18 @@ export async function processUserMessage(userMessage: string): Promise<string> {
     day: "numeric",
   })
 
-  const result = await generateText({
-    model: "openai/gpt-4o-mini",
-    system: `You are the Anvance Production assistant. The team does social marketing, photo/video, social management, ads, and strategy. Tasks live in Notion with a full pipeline.
+  const userLine = telegram
+    ? `Telegram user: ${telegram.displayName} (id ${telegram.telegramUserId}, chat type ${telegram.chatType}). ` +
+      `Notion link for /mytasks + assignment DMs: ${telegram.notionLinked ? "yes" : "no — suggest /id and onboarding if they ask for personal tasks"}.`
+    : ""
+
+  try {
+    const result = streamText({
+      model: resolveModelId(),
+      system: `You are the Anvance Production assistant. The team does social marketing, photo/video, social management, ads, and strategy. Tasks live in Notion with a full pipeline.
 
 Today's date: ${today}
+${userLine}
 
 Notion statuses (exact labels): Intake, Briefing, Scheduled, In production, Internal review, Client review, Revisions, Approved, Published, Reporting, Done, On hold.
 
@@ -167,11 +195,18 @@ Use tools to fetch data. Prefer:
 
 If the user is vague ("what should we do?"), order: overdue → today → in production → review queue.
 
-Keep answers concise; task lists already include client, owner, priority, links when present.`,
-    prompt: userMessage,
-    tools,
-    maxSteps: 6,
-  })
+For "my tasks" or "what is assigned to me": you cannot list their personal assignee filter—tell them to use the /mytasks command or the "My tasks" button in Telegram (that path is linked to Notion).
 
-  return result.text || "I couldn't process your request. Please try again."
+Keep answers concise; task lists already include client, owner, priority, links when present.`,
+      prompt: userMessage,
+      tools,
+      stopWhen: stepCountIs(6),
+    })
+
+    const text = await result.text
+    return text.trim() || "I couldn't process your request. Please try again."
+  } catch (e) {
+    console.error("[ai-agent] streamText failed:", e)
+    return "I couldn't process your request. Please try again."
+  }
 }

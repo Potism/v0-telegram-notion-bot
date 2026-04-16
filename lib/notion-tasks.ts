@@ -721,6 +721,25 @@ export async function getAllTasks(): Promise<Task[]> {
   return enrichTasksWithComments(extractTasks(response))
 }
 
+/** Active tasks where Assignee includes this Notion user (matches `people.contains` in API). */
+export async function getMyAssignedTasks(notionUserId: string): Promise<Task[]> {
+  const assigneeFilter: Record<string, unknown> = {
+    property: ASSIGNEE_PROPERTY,
+    people: { contains: notionUserId.trim() },
+  }
+  const response = await queryTasksDatabase({
+    filter: {
+      and: [assigneeFilter, ...buildActiveTaskFilters()],
+    },
+    sorts: safeSorts(
+      { property: DUE_DATE_PROPERTY, direction: "ascending" },
+      { property: STATUS_PROPERTY, direction: "ascending" }
+    ),
+  })
+
+  return enrichTasksWithComments(extractTasks(response))
+}
+
 function statusEmoji(status: string): string {
   const s = status.toLowerCase()
   if (s.includes("done") || s.includes("published")) return "✅"

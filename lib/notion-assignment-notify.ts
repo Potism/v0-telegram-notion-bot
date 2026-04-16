@@ -58,6 +58,27 @@ function parseUserMap(): Map<string, string> {
   return map
 }
 
+/** Telegram user id → Notion user id from `TELEGRAM_NOTION_USER_MAP` (e.g. `/mytasks`). */
+export function getNotionUserIdForTelegramUser(telegramUserId: string | number): string | null {
+  const tid = String(telegramUserId).trim()
+  const raw = process.env.TELEGRAM_NOTION_USER_MAP?.trim()
+  if (!raw) return null
+  try {
+    const arr = JSON.parse(raw) as unknown
+    if (!Array.isArray(arr)) return null
+    for (const row of arr) {
+      if (!row || typeof row !== "object") continue
+      const o = row as { notionUserId?: string; telegramChatId?: string | number }
+      const t = o.telegramChatId != null ? String(o.telegramChatId).trim() : ""
+      const n = o.notionUserId?.trim()
+      if (t && n && t === tid) return n
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
 let schemaCache: { assigneePropId: string | null; at: number } | null = null
 const SCHEMA_TTL_MS = 10 * 60 * 1000
 

@@ -11,7 +11,15 @@ import {
   getReviewTasks,
   getTodayTasks,
   getUpcomingTasks,
+  getMyAssignedTasks,
 } from "@/lib/notion-tasks"
+import { getNotionUserIdForTelegramUser } from "@/lib/notion-assignment-notify"
+import {
+  buildGroupStartHint,
+  buildIdentityCard,
+  buildWelcomeHeadline,
+  type TelegramMemberSnapshot,
+} from "@/lib/telegram-onboarding"
 
 interface TelegramUpdate {
   update_id: number
@@ -20,7 +28,9 @@ interface TelegramUpdate {
     from: {
       id: number
       first_name: string
+      last_name?: string
       username?: string
+      language_code?: string
     }
     chat: {
       id: number
@@ -37,6 +47,8 @@ const MAIN_MENU_KEYBOARD = {
     [{ text: "📆 Show upcoming tasks" }, { text: "⚠️ What's overdue?" }],
     [{ text: "🔄 In production" }, { text: "🧭 What should I do next?" }],
     [{ text: "📥 Team queue" }, { text: "👀 Needs review" }],
+    [{ text: "📋 My tasks" }],
+    [{ text: "📇 My Telegram ID" }],
     [{ text: "🚫 Blocked" }],
     [{ text: "❓ Help" }, { text: "🙈 Hide keyboard" }],
   ],
@@ -44,11 +56,48 @@ const MAIN_MENU_KEYBOARD = {
   one_time_keyboard: false,
 } as const
 
+function commandToken(text: string): string {
+  return (text.trim().split(/\s+/)[0] ?? "").split("@")[0].toLowerCase()
+}
+
 function normalizeQuickCommand(message: string): string {
   return message
     .replace(/^[^\p{L}\p{N}]+/u, "")
     .trim()
     .toLowerCase()
+}
+
+/** Handles `/mytasks`, `/mytasks@BotName`, `/mytask`, etc. */
+function isMyTasksCommand(text: string): boolean {
+  const cmd = commandToken(text)
+  return cmd === "/mytasks" || cmd === "/mytask"
+}
+
+function isStartCommand(text: string): boolean {
+  return commandToken(text) === "/start"
+}
+
+function isIdCommand(text: string): boolean {
+  const cmd = commandToken(text)
+  return cmd === "/id" || cmd === "/whoami" || cmd === "/profile"
+}
+
+function snapshotFromUpdate(update: TelegramUpdate): TelegramMemberSnapshot | null {
+  const m = update.message
+  if (!m?.from) return null
+  return {
+    telegramUserId: m.from.id,
+    chatId: m.chat.id,
+    chatType: m.chat.type,
+    firstName: m.from.first_name,
+    lastName: m.from.last_name,
+    username: m.from.username,
+    languageCode: m.from.language_code,
+  }
+}
+
+function menuKeyboardForChat(chatType: string): typeof MAIN_MENU_KEYBOARD | undefined {
+  return chatType === "private" ? MAIN_MENU_KEYBOARD : undefined
 }
 
 function getErrorText(error: unknown): string {
@@ -69,35 +118,71 @@ function getErrorText(error: unknown): string {
   return "Unknown error"
 }
 
+function unlinkHint(): string {
+  return (
+    "You are not linked to Notion yet.\n\n" +
+    "Tap 📇 My Telegram ID (or send /id), copy the line for TELEGRAM_NOTION_USER_MAP, " +
+    "and ask your admin to add your Notion user UUID. Then /mytasks will work."
+  )
+}
+
 export async function POST(request: Request) {
   try {
     const update: TelegramUpdate = await request.json()
 
-    // Only process text messages
     if (!update.message?.text) {
       return NextResponse.json({ ok: true })
     }
 
     const chatId = update.message.chat.id
     const userMessage = update.message.text
-    const userName = update.message.from.first_name
+    const chatType = update.message.chat.type
+    const from = update.message.from
+    const userName = from.first_name
+    const notionLinked = Boolean(getNotionUserIdForTelegramUser(from.id))
+    const displayName = [from.first_name, from.last_name].filter(Boolean).join(" ") || "Anvance teammate"
 
     try {
-      // Handle /start and /menu commands
-      if (userMessage === "/start" || userMessage === "/menu") {
-        await sendMessage(
-          chatId,
-          userMessage === "/start"
-            ? `Hello ${userName}! 👋\n\nAnvance Production — your Notion board in Telegram. Tap a button below or ask anything (today, queue, review, blocked, Photo/Video tasks…).`
-            : `📌 Menu opened — Anvance Production. Tap a quick command or ask in your own words.`,
-          {
-            replyMarkup: MAIN_MENU_KEYBOARD,
-          }
-        )
+      if (isStartCommand(userMessage)) {
+        const snap = snapshotFromUpdate(update)
+        if (!snap) {
+          await sendMessage(chatId, "Could not read your Telegram profile. Try again.")
+          return NextResponse.json({ ok: true })
+        }
+
+        if (chatType !== "private") {
+          const botUser = process.env.TELEGRAM_BOT_USERNAME?.trim()
+          await sendMessage(chatId, buildGroupStartHint(botUser))
+          return NextResponse.json({ ok: true })
+        }
+
+        await sendMessage(chatId, buildWelcomeHeadline(snap))
+        await sendMessage(chatId, buildIdentityCard(snap, notionLinked), {
+          replyMarkup: MAIN_MENU_KEYBOARD,
+        })
         return NextResponse.json({ ok: true })
       }
 
-      // Hide custom keyboard
+      if (userMessage === "/menu") {
+        const keyboard = menuKeyboardForChat(chatType)
+        if (chatType === "private") {
+          await sendMessage(
+            chatId,
+            "Anvance Production — quick board shortcuts below. Ask anything in chat for filters, statuses, or service lines.",
+            { replyMarkup: keyboard }
+          )
+        } else {
+          await sendMessage(
+            chatId,
+            "Anvance Production — board shortcuts.\n\n" +
+              "For your Telegram id and /mytasks, open a private chat with this bot.\n\n" +
+              "Commands: /mytasks /debug /id /help\n" +
+              "In a group, quick buttons (if shown) still query the shared Notion database."
+          )
+        }
+        return NextResponse.json({ ok: true })
+      }
+
       if (userMessage === "🙈 Hide keyboard") {
         await sendMessage(chatId, "Keyboard hidden. Send /menu anytime to show quick commands again.", {
           replyMarkup: {
@@ -107,12 +192,35 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true })
       }
 
-      // Handle /help command
       if (userMessage === "/help" || userMessage === "❓ Help") {
         await sendMessage(
           chatId,
-          `📋 **Anvance Production — Bot**\n\n**Buttons:** Today, Upcoming, Overdue, In production, What next, Team queue, Needs review, Blocked.\n\n**Commands:** /menu /debug\n\n**Ask in chat:** e.g. "Show Client review", "Photo tasks this week", "What's blocked?"\n\nNotion is the source of truth; this bot is for fast visibility.`
+          "Anvance Team Bot — Help\n\n" +
+            "Buttons (private chat): Today, Upcoming, Overdue, In production, What next, Team queue, Needs review, My tasks, My Telegram ID, Blocked.\n\n" +
+            "Commands: /start (welcome + your ids) · /menu · /id · /mytasks · /debug · /help\n\n" +
+            "Ask in chat: e.g. Client review this week, Photo tasks, what's blocked.\n\n" +
+            "/mytasks needs a Notion user link (TELEGRAM_NOTION_USER_MAP). /id shows what to send your admin.\n\n" +
+            "Notion is the source of truth."
         )
+        return NextResponse.json({ ok: true })
+      }
+
+      if (isIdCommand(userMessage)) {
+        const snap = snapshotFromUpdate(update)
+        if (!snap) {
+          await sendMessage(chatId, "Could not read your Telegram profile. Try again.")
+          return NextResponse.json({ ok: true })
+        }
+        if (chatType !== "private") {
+          await sendMessage(
+            chatId,
+            "For your Telegram id, open a private chat with this bot and send /id there."
+          )
+          return NextResponse.json({ ok: true })
+        }
+        await sendMessage(chatId, buildIdentityCard(snap, notionLinked), {
+          replyMarkup: menuKeyboardForChat(chatType),
+        })
         return NextResponse.json({ ok: true })
       }
 
@@ -121,59 +229,99 @@ export async function POST(request: Request) {
           const tasks = await getAllTasks()
           await sendMessage(
             chatId,
-            `✅ Debug OK\n\nNotion connection works.\nTasks fetched: ${tasks.length}\nDatabase ID: ${process.env.NOTION_DATABASE_ID || "using fallback in code"}`
+            `Debug OK\n\nNotion connection works.\nTasks fetched: ${tasks.length}\nDatabase ID: ${process.env.NOTION_DATABASE_ID || "using fallback in code"}\n\nNotion link for you: ${notionLinked ? "yes" : "no"}`
           )
         } catch (debugError) {
           await sendMessage(
             chatId,
-            `❌ Debug failed\n\n${getErrorText(debugError)}\n\nCheck DB share + env vars on Vercel.`
+            `Debug failed\n\n${getErrorText(debugError)}\n\nCheck DB share + env vars on Vercel.`
           )
         }
         return NextResponse.json({ ok: true })
       }
 
+      if (isMyTasksCommand(userMessage)) {
+        const notionUserId = getNotionUserIdForTelegramUser(from.id)
+        if (!notionUserId) {
+          await sendMessage(chatId, unlinkHint())
+          return NextResponse.json({ ok: true })
+        }
+        const tasks = await getMyAssignedTasks(notionUserId)
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "My assigned tasks (active)"))
+        return NextResponse.json({ ok: true })
+      }
+
       const normalizedMessage = normalizeQuickCommand(userMessage)
 
-      // Handle quick menu commands directly (without AI dependency).
       if (normalizedMessage === "what tasks do i have today?") {
         const tasks = await getTodayTasks()
-        await sendMessage(chatId, formatTasksForTelegram(tasks, "📅 Tasks Due Today"))
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "Tasks Due Today"))
         return NextResponse.json({ ok: true })
       }
 
       if (normalizedMessage === "show upcoming tasks") {
         const tasks = await getUpcomingTasks(7)
-        await sendMessage(chatId, formatTasksForTelegram(tasks, "📆 Upcoming (next 7 days)"))
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "Upcoming (next 7 days)"))
         return NextResponse.json({ ok: true })
       }
 
       if (normalizedMessage === "what's overdue?" || normalizedMessage === "whats overdue?") {
         const tasks = await getOverdueTasks()
-        await sendMessage(chatId, formatTasksForTelegram(tasks, "⚠️ Overdue Tasks"))
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "Overdue Tasks"))
         return NextResponse.json({ ok: true })
       }
 
       if (normalizedMessage === "show tasks in progress" || normalizedMessage === "in production") {
         const tasks = await getInProgressTasks()
-        await sendMessage(chatId, formatTasksForTelegram(tasks, "🔄 In production"))
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "In production"))
         return NextResponse.json({ ok: true })
       }
 
       if (normalizedMessage === "team queue") {
         const tasks = await getPipelineQueueTasks()
-        await sendMessage(chatId, formatTasksForTelegram(tasks, "📥 Team queue (Intake / Briefing / Scheduled)"))
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "Team queue (Intake / Briefing / Scheduled)"))
         return NextResponse.json({ ok: true })
       }
 
       if (normalizedMessage === "needs review") {
         const tasks = await getReviewTasks()
-        await sendMessage(chatId, formatTasksForTelegram(tasks, "👀 Needs review"))
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "Needs review"))
         return NextResponse.json({ ok: true })
       }
 
       if (normalizedMessage === "blocked") {
         const tasks = await getBlockedTasks()
-        await sendMessage(chatId, formatTasksForTelegram(tasks, "🚫 Blocked / on hold"))
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "Blocked / on hold"))
+        return NextResponse.json({ ok: true })
+      }
+
+      if (normalizedMessage === "my tasks") {
+        const notionUserId = getNotionUserIdForTelegramUser(from.id)
+        if (!notionUserId) {
+          await sendMessage(chatId, unlinkHint())
+          return NextResponse.json({ ok: true })
+        }
+        const tasks = await getMyAssignedTasks(notionUserId)
+        await sendMessage(chatId, formatTasksForTelegram(tasks, "My assigned tasks (active)"))
+        return NextResponse.json({ ok: true })
+      }
+
+      if (normalizedMessage === "my telegram id") {
+        const snap = snapshotFromUpdate(update)
+        if (!snap) {
+          await sendMessage(chatId, "Could not read your Telegram profile. Try again.")
+          return NextResponse.json({ ok: true })
+        }
+        if (chatType !== "private") {
+          await sendMessage(
+            chatId,
+            "Open a private chat with this bot and tap My Telegram ID there (or send /id)."
+          )
+          return NextResponse.json({ ok: true })
+        }
+        await sendMessage(chatId, buildIdentityCard(snap, notionLinked), {
+          replyMarkup: menuKeyboardForChat(chatType),
+        })
         return NextResponse.json({ ok: true })
       }
 
@@ -182,24 +330,28 @@ export async function POST(request: Request) {
         if (overdueTasks.length > 0) {
           await sendMessage(
             chatId,
-            `Prioritize overdue items first.\n\n${formatTasksForTelegram(overdueTasks, "⚠️ Overdue Tasks")}`
+            `Prioritize overdue first.\n\n${formatTasksForTelegram(overdueTasks, "Overdue Tasks")}`
           )
           return NextResponse.json({ ok: true })
         }
 
         const todayTasks = await getTodayTasks()
         if (todayTasks.length > 0) {
-          await sendMessage(chatId, formatTasksForTelegram(todayTasks, "📅 Start With Today's Tasks"))
+          await sendMessage(chatId, formatTasksForTelegram(todayTasks, "Start with today"))
           return NextResponse.json({ ok: true })
         }
 
         const upcomingTasks = await getUpcomingTasks(7)
-        await sendMessage(chatId, formatTasksForTelegram(upcomingTasks, "📆 Next Up (7 Days)"))
+        await sendMessage(chatId, formatTasksForTelegram(upcomingTasks, "Next up (7 days)"))
         return NextResponse.json({ ok: true })
       }
 
-      // Process the message with AI
-      const response = await processUserMessage(userMessage)
+      const response = await processUserMessage(userMessage, {
+        telegramUserId: from.id,
+        displayName,
+        notionLinked,
+        chatType,
+      })
       await sendMessage(chatId, response)
 
       return NextResponse.json({ ok: true })
@@ -207,17 +359,16 @@ export async function POST(request: Request) {
       console.error("[v0] Message processing error:", error)
       await sendMessage(
         chatId,
-        `⚠️ I couldn't fetch tasks right now.\n\n${getErrorText(error)}\n\nSend /debug for connection details.`
+        `Could not fetch tasks right now.\n\n${getErrorText(error)}\n\nSend /debug for connection details.`
       )
       return NextResponse.json({ ok: true })
     }
   } catch (error) {
     console.error("[v0] Telegram webhook error:", error)
-    return NextResponse.json({ ok: true }) // Always return 200 to Telegram
+    return NextResponse.json({ ok: true })
   }
 }
 
-// Health check
 export async function GET() {
   return NextResponse.json({ status: "Telegram webhook is active" })
 }

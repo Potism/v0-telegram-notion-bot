@@ -197,7 +197,14 @@ If your Notion options use different spelling (e.g. “Internal Review”), eith
 
 ### Telegram quick buttons (after deploy)
 
-Today · Upcoming · Overdue · In production · What next · **Team queue** · **Needs review** · **Blocked** — plus `/menu`, `/debug`, and natural-language questions via the AI path.
+Today · Upcoming · Overdue · In production · What next · **Team queue** · **Needs review** · **My tasks** · **My Telegram ID** · **Blocked** — plus `/start`, `/menu`, `/id`, `/mytasks`, `/debug`, and natural-language questions via the AI path.
+
+### Onboarding (`/start`, `/id`)
+
+1. **Private `/start`:** first message welcomes the teammate; second message shows **Telegram user id**, chat id, display name, @username, language, whether they are already **linked** to Notion, and one **copy-paste** line for `TELEGRAM_NOTION_USER_MAP` (admin fills in `notionUserId` from Notion People / workspace members). The reply keyboard is attached to that second message.
+2. **`/id`** or the **My Telegram ID** button sends the same identity card again (private chat only for full ids).
+3. **Groups / supergroups:** `/start` tells people to open a **DM** with the bot for ids and `/mytasks`. Optional env **`TELEGRAM_BOT_USERNAME`** (username without `@`) improves the hint with a direct `@your_bot` link.
+4. **AI model (optional):** set **`ANVANCE_AI_MODEL`** on Vercel to your AI Gateway / OpenAI model id (e.g. `openai/gpt-4o-mini`). If unset, the code tries `OPENAI_MODEL`, then `VERCEL_AI_MODEL`, then defaults to `openai/gpt-4o-mini`. The bot uses **`streamText`** so tool use matches the same multi-step behaviour as before.
 
 ---
 
