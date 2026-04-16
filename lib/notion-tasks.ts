@@ -8,26 +8,43 @@ const notion = new Client({
   auth: process.env.NOTION_API_KEY,
 })
 
+function envProp(val: string | undefined, fallback: string): string {
+  return (val ?? fallback).trim()
+}
+
+/** Optional column: unset env = do not query (avoids invalid OR branches if column missing). */
+function envPropOptional(val: string | undefined): string {
+  if (val === undefined || val === null) return ""
+  const t = String(val).trim()
+  if (t === "" || t === "-" || t.toLowerCase() === "none") return ""
+  return t
+}
+
 // Database + properties (override via env to match your Notion DB)
-const DATABASE_ID = process.env.NOTION_DATABASE_ID || "3428ab25d01e806eb5f0eaf1a1871aff"
-const TASK_NAME_PROPERTY = process.env.NOTION_TASK_NAME_PROPERTY || "Name"
-const DUE_DATE_PROPERTY = process.env.NOTION_DUE_DATE_PROPERTY || "Due Date"
-const SHOOT_LIVE_DATE_PROPERTY = (process.env.NOTION_SHOOT_LIVE_DATE_PROPERTY ?? "Shoot / live date").trim()
-const STATUS_PROPERTY = process.env.NOTION_STATUS_PROPERTY || "Status"
-const ASSIGNEE_PROPERTY = process.env.NOTION_ASSIGNEE_PROPERTY || "Assignee"
-const COLLABORATORS_PROPERTY = (process.env.NOTION_COLLABORATORS_PROPERTY ?? "Collaborators").trim()
-const REVIEWER_PROPERTY = (process.env.NOTION_REVIEWER_PROPERTY ?? "Reviewer").trim()
-const CLIENT_PROPERTY = (process.env.NOTION_CLIENT_PROPERTY ?? "Client").trim()
-const SERVICE_LINE_PROPERTY = (process.env.NOTION_SERVICE_LINE_PROPERTY ?? "Service line").trim()
-const DELIVERABLE_PROPERTY = (process.env.NOTION_DELIVERABLE_PROPERTY ?? "Deliverable").trim()
-const PRIORITY_PROPERTY = (process.env.NOTION_PRIORITY_PROPERTY ?? "Priority").trim()
-const CHANNELS_PROPERTY = (process.env.NOTION_CHANNELS_PROPERTY ?? "Channels").trim()
-const BRIEF_LINK_PROPERTY = (process.env.NOTION_BRIEF_LINK_PROPERTY ?? "Brief link").trim()
-const ASSETS_LINK_PROPERTY = (process.env.NOTION_ASSETS_LINK_PROPERTY ?? "Assets link").trim()
-const INTERNAL_NOTES_PROPERTY = (process.env.NOTION_INTERNAL_NOTES_PROPERTY ?? "Internal notes").trim()
-const BLOCKED_BY_PROPERTY = (process.env.NOTION_BLOCKED_BY_PROPERTY ?? "Blocked by").trim()
-const CLIENT_APPROVAL_PROPERTY = (process.env.NOTION_CLIENT_APPROVAL_PROPERTY ?? "Client approval").trim()
-const CAMPAIGN_PROPERTY = (process.env.NOTION_CAMPAIGN_PROPERTY ?? "Campaign").trim()
+const DATABASE_ID = envProp(process.env.NOTION_DATABASE_ID, "3428ab25d01e806eb5f0eaf1a1871aff")
+const TASK_NAME_PROPERTY = envProp(process.env.NOTION_TASK_NAME_PROPERTY, "Name")
+/** Must match Notion column name exactly (export shows `Due date`). */
+const DUE_DATE_PROPERTY = envProp(process.env.NOTION_DUE_DATE_PROPERTY, "Due date")
+/** Matches Anvance CSV; set env to `-` or `none` to disable. */
+const SHOOT_LIVE_DATE_PROPERTY =
+  process.env.NOTION_SHOOT_LIVE_DATE_PROPERTY === undefined
+    ? "Shoot / live date"
+    : envPropOptional(process.env.NOTION_SHOOT_LIVE_DATE_PROPERTY)
+const STATUS_PROPERTY = envProp(process.env.NOTION_STATUS_PROPERTY, "Status")
+const ASSIGNEE_PROPERTY = envProp(process.env.NOTION_ASSIGNEE_PROPERTY, "Assignee")
+const COLLABORATORS_PROPERTY = envProp(process.env.NOTION_COLLABORATORS_PROPERTY, "Collaborators")
+const REVIEWER_PROPERTY = envProp(process.env.NOTION_REVIEWER_PROPERTY, "Reviewer")
+const CLIENT_PROPERTY = envProp(process.env.NOTION_CLIENT_PROPERTY, "Client")
+const SERVICE_LINE_PROPERTY = envProp(process.env.NOTION_SERVICE_LINE_PROPERTY, "Service line")
+const DELIVERABLE_PROPERTY = envProp(process.env.NOTION_DELIVERABLE_PROPERTY, "Deliverable")
+const PRIORITY_PROPERTY = envProp(process.env.NOTION_PRIORITY_PROPERTY, "Priority")
+const CHANNELS_PROPERTY = envProp(process.env.NOTION_CHANNELS_PROPERTY, "Channels")
+const BRIEF_LINK_PROPERTY = envProp(process.env.NOTION_BRIEF_LINK_PROPERTY, "Brief link")
+const ASSETS_LINK_PROPERTY = envProp(process.env.NOTION_ASSETS_LINK_PROPERTY, "Assets link")
+const INTERNAL_NOTES_PROPERTY = envProp(process.env.NOTION_INTERNAL_NOTES_PROPERTY, "Internal notes")
+const BLOCKED_BY_PROPERTY = envProp(process.env.NOTION_BLOCKED_BY_PROPERTY, "Blocked by")
+const CLIENT_APPROVAL_PROPERTY = envProp(process.env.NOTION_CLIENT_APPROVAL_PROPERTY, "Client approval")
+const CAMPAIGN_PROPERTY = envProp(process.env.NOTION_CAMPAIGN_PROPERTY, "Campaign")
 
 const STATUS_FILTER_TYPE = (process.env.NOTION_STATUS_FILTER_TYPE || "select").toLowerCase()
 
@@ -268,12 +285,19 @@ function compactFilters(filters: Array<Record<string, unknown> | null | undefine
   return filters.filter((f): f is Record<string, unknown> => Boolean(f))
 }
 
+function safeSorts(...sorts: Array<{ property: string; direction: "ascending" | "descending" } | null | undefined>) {
+  return sorts.filter(
+    (s): s is { property: string; direction: "ascending" | "descending" } =>
+      Boolean(s?.property?.trim())
+  )
+}
+
 function buildDateEqualsFilter(propertyName: string, dateValue: string): Record<string, unknown> | null {
   const property = propertyName.trim()
-  if (!property) return null
+  if (!property || !dateValue?.trim()) return null
   return {
     property,
-    date: { equals: dateValue },
+    date: { equals: dateValue.trim() },
   }
 }
 
@@ -283,13 +307,31 @@ function buildDateRangeFilter(
   end: string
 ): Record<string, unknown> | null {
   const property = propertyName.trim()
-  if (!property) return null
+  if (!property || !start?.trim() || !end?.trim()) return null
   return {
     and: [
-      { property, date: { on_or_after: start } },
-      { property, date: { on_or_before: end } },
+      { property, date: { on_or_after: start.trim() } },
+      { property, date: { on_or_before: end.trim() } },
     ],
   }
+}
+
+function isFilterValidationError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return error.message.includes("validation_error") && error.message.includes("body.filter")
+}
+
+async function runTodayQuery(dateFilter: Record<string, unknown>): Promise<Task[]> {
+  const response = await queryTasksDatabase({
+    filter: {
+      and: [dateFilter, ...buildActiveTaskFilters()],
+    },
+    sorts: safeSorts(
+      { property: PRIORITY_PROPERTY, direction: "ascending" },
+      { property: STATUS_PROPERTY, direction: "ascending" }
+    ),
+  })
+  return enrichTasksWithComments(extractTasks(response))
 }
 
 function buildOptionalOrFilter(filters: Record<string, unknown>[]): Record<string, unknown> | null {
@@ -432,25 +474,38 @@ const todayIso = () => new Date().toISOString().split("T")[0]
 
 export async function getTodayTasks(): Promise<Task[]> {
   const today = todayIso()
-  const dateOrBranches = compactFilters([
-    buildDateEqualsFilter(DUE_DATE_PROPERTY, today),
-    buildDateEqualsFilter(SHOOT_LIVE_DATE_PROPERTY, today),
-  ])
-  const dateFilter = buildOptionalOrFilter(dateOrBranches)
-  if (!dateFilter) {
-    throw new Error("Date filters are not configured. Set NOTION_DUE_DATE_PROPERTY in env.")
+  const dueEq = buildDateEqualsFilter(DUE_DATE_PROPERTY, today)
+  const shootEq = buildDateEqualsFilter(SHOOT_LIVE_DATE_PROPERTY, today)
+  const combined = buildOptionalOrFilter(compactFilters([dueEq, shootEq]))
+  if (!combined) {
+    throw new Error("Date filters are not configured. Set NOTION_DUE_DATE_PROPERTY in Vercel to your exact Due column name.")
   }
 
+  try {
+    return await runTodayQuery(combined)
+  } catch (e) {
+    if (!isFilterValidationError(e)) throw e
+    if (dueEq) {
+      try {
+        return await runTodayQuery(dueEq)
+      } catch (e2) {
+        if (!isFilterValidationError(e2)) throw e2
+      }
+    }
+    if (shootEq) {
+      return await runTodayQuery(shootEq)
+    }
+    throw e
+  }
+}
+
+async function runUpcomingQuery(dateRangeFilter: Record<string, unknown>): Promise<Task[]> {
   const response = await queryTasksDatabase({
     filter: {
-      and: [dateFilter, ...buildActiveTaskFilters()],
+      and: [dateRangeFilter, ...buildActiveTaskFilters()],
     },
-    sorts: [
-      { property: PRIORITY_PROPERTY, direction: "ascending" },
-      { property: STATUS_PROPERTY, direction: "ascending" },
-    ],
+    sorts: safeSorts({ property: DUE_DATE_PROPERTY, direction: "ascending" }),
   })
-
   return enrichTasksWithComments(extractTasks(response))
 }
 
@@ -460,26 +515,29 @@ export async function getUpcomingTasks(days: number = 7): Promise<Task[]> {
   futureDate.setDate(today.getDate() + days)
   const start = today.toISOString().split("T")[0]
   const end = futureDate.toISOString().split("T")[0]
-  const dateRangeBranches = compactFilters([
-    buildDateRangeFilter(DUE_DATE_PROPERTY, start, end),
-    buildDateRangeFilter(SHOOT_LIVE_DATE_PROPERTY, start, end),
-  ])
-  const dateRangeFilter = buildOptionalOrFilter(dateRangeBranches)
+  const dueRange = buildDateRangeFilter(DUE_DATE_PROPERTY, start, end)
+  const shootRange = buildDateRangeFilter(SHOOT_LIVE_DATE_PROPERTY, start, end)
+  const dateRangeFilter = buildOptionalOrFilter(compactFilters([dueRange, shootRange]))
   if (!dateRangeFilter) {
-    throw new Error("Date range filters are not configured. Set NOTION_DUE_DATE_PROPERTY in env.")
+    throw new Error("Date range filters are not configured. Set NOTION_DUE_DATE_PROPERTY in Vercel.")
   }
 
-  const response = await queryTasksDatabase({
-    filter: {
-      and: [
-        dateRangeFilter,
-        ...buildActiveTaskFilters(),
-      ],
-    },
-    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
-  })
-
-  return enrichTasksWithComments(extractTasks(response))
+  try {
+    return await runUpcomingQuery(dateRangeFilter)
+  } catch (e) {
+    if (!isFilterValidationError(e)) throw e
+    if (dueRange) {
+      try {
+        return await runUpcomingQuery(dueRange)
+      } catch (e2) {
+        if (!isFilterValidationError(e2)) throw e2
+      }
+    }
+    if (shootRange) {
+      return await runUpcomingQuery(shootRange)
+    }
+    throw e
+  }
 }
 
 export async function getInProgressTasks(): Promise<Task[]> {
@@ -487,10 +545,10 @@ export async function getInProgressTasks(): Promise<Task[]> {
     filter: {
       ...buildStatusEqualsFilter(STATUS_IN_PROGRESS),
     },
-    sorts: [
+    sorts: safeSorts(
       { property: PRIORITY_PROPERTY, direction: "ascending" },
-      { property: DUE_DATE_PROPERTY, direction: "ascending" },
-    ],
+      { property: DUE_DATE_PROPERTY, direction: "ascending" }
+    ),
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -502,10 +560,10 @@ export async function getPipelineQueueTasks(): Promise<Task[]> {
     filter: {
       and: [buildStatusOrEqualsFilter(PIPELINE_QUEUE_STATUSES), ...buildActiveTaskFilters()],
     },
-    sorts: [
+    sorts: safeSorts(
       { property: PRIORITY_PROPERTY, direction: "ascending" },
-      { property: DUE_DATE_PROPERTY, direction: "ascending" },
-    ],
+      { property: DUE_DATE_PROPERTY, direction: "ascending" }
+    ),
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -517,7 +575,7 @@ export async function getReviewTasks(): Promise<Task[]> {
     filter: {
       and: [buildStatusOrEqualsFilter(REVIEW_STATUSES), ...buildActiveTaskFilters()],
     },
-    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
+    sorts: safeSorts({ property: DUE_DATE_PROPERTY, direction: "ascending" }),
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -550,7 +608,7 @@ export async function getBlockedTasks(): Promise<Task[]> {
         buildStatusDoesNotEqualFilter(STATUS_DONE),
       ],
     },
-    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
+    sorts: safeSorts({ property: DUE_DATE_PROPERTY, direction: "ascending" }),
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -565,10 +623,10 @@ export async function getAllIncompleteTasks(): Promise<Task[]> {
     filter: {
       and: buildActiveTaskFilters(),
     },
-    sorts: [
+    sorts: safeSorts(
       { property: STATUS_PROPERTY, direction: "ascending" },
-      { property: DUE_DATE_PROPERTY, direction: "ascending" },
-    ],
+      { property: DUE_DATE_PROPERTY, direction: "ascending" }
+    ),
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -585,7 +643,7 @@ export async function searchTasks(query: string): Promise<Task[]> {
         ...buildActiveTaskFilters(),
       ],
     },
-    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
+    sorts: safeSorts({ property: DUE_DATE_PROPERTY, direction: "ascending" }),
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -601,7 +659,7 @@ export async function getOverdueTasks(): Promise<Task[]> {
         ...buildActiveTaskFilters(),
       ],
     },
-    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
+    sorts: safeSorts({ property: DUE_DATE_PROPERTY, direction: "ascending" }),
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -613,10 +671,10 @@ export async function getTasksByNotionStatus(statusName: string): Promise<Task[]
     filter: {
       ...buildStatusEqualsFilter(statusName),
     },
-    sorts: [
+    sorts: safeSorts(
       { property: PRIORITY_PROPERTY, direction: "ascending" },
-      { property: DUE_DATE_PROPERTY, direction: "ascending" },
-    ],
+      { property: DUE_DATE_PROPERTY, direction: "ascending" }
+    ),
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -643,7 +701,7 @@ export async function getTasksByServiceLine(serviceLine: string): Promise<Task[]
         ...buildActiveTaskFilters(),
       ],
     },
-    sorts: [{ property: DUE_DATE_PROPERTY, direction: "ascending" }],
+    sorts: safeSorts({ property: DUE_DATE_PROPERTY, direction: "ascending" }),
   })
 
   return enrichTasksWithComments(extractTasks(response))
@@ -654,10 +712,10 @@ export async function getAllTasks(): Promise<Task[]> {
     filter: {
       and: buildActiveTaskFilters(),
     },
-    sorts: [
+    sorts: safeSorts(
       { property: DUE_DATE_PROPERTY, direction: "ascending" },
-      { property: STATUS_PROPERTY, direction: "ascending" },
-    ],
+      { property: STATUS_PROPERTY, direction: "ascending" }
+    ),
   })
 
   return enrichTasksWithComments(extractTasks(response))

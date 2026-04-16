@@ -168,8 +168,8 @@ The bot reads these **exact** property names unless you override with env:
 | Notion property | Env variable | Default |
 |-----------------|--------------|---------|
 | Title | `NOTION_TASK_NAME_PROPERTY` | `Name` |
-| Due Date | `NOTION_DUE_DATE_PROPERTY` | `Due Date` (must match **exact** column name in Notion, including spaces and capitalization — e.g. `Due date` if you renamed it) |
-| Shoot / live date | `NOTION_SHOOT_LIVE_DATE_PROPERTY` | `Shoot / live date` (set empty to disable) |
+| Due date | `NOTION_DUE_DATE_PROPERTY` | `Due date` (default matches Notion CSV export / template; use `Due Date` only if your column is spelled that way) |
+| Shoot / live date | `NOTION_SHOOT_LIVE_DATE_PROPERTY` | Default `Shoot / live date` (matches your CSV). Set `-` or `none` in env if your database has no such column. |
 | Status | `NOTION_STATUS_PROPERTY` | `Status` |
 | Assignee | `NOTION_ASSIGNEE_PROPERTY` | `Assignee` |
 | Collaborators | `NOTION_COLLABORATORS_PROPERTY` | `Collaborators` |
@@ -198,6 +198,14 @@ If your Notion options use different spelling (e.g. “Internal Review”), eith
 ### Telegram quick buttons (after deploy)
 
 Today · Upcoming · Overdue · In production · What next · **Team queue** · **Needs review** · **Blocked** — plus `/menu`, `/debug`, and natural-language questions via the AI path.
+
+### Reference: Production CSV export (column headers)
+
+If you export **Production → All → Export → CSV**, the header row should match what the bot expects. Verified example:
+
+`Name`, `Assets link`, `Assignee`, `Blocked by`, `Brief link`, `Campaign`, `Channels`, `Client`, `Client approval`, `Collaborators`, `Created time`, `Deliverable`, **`Due date`**, `Est. hours`, `Internal notes`, `Last edited time`, `Priority`, `Reviewer`, `Service line`, **`Shoot / live date`**, `Status`
+
+The bot defaults **`Due date`** and **`Shoot / live date`** to these spellings. If your export differs, set the matching `NOTION_*` env vars in Vercel.
 
 ---
 
